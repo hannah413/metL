@@ -4,9 +4,7 @@ Author: Hannah Manning
 Date: February, 2018
 """
 
-from scripts.metab_mapping import *
-from scripts.file_conversion import *
-from scripts.filtering immport *
+from scripts import file_conversion, filtering, metab_mapping, formatting
 from scipy import stats as st
 import pandas as pd
 import itertools
@@ -20,10 +18,23 @@ compounds_fl = inputdir + 'compounds.tsv'
 full_sif = inputdir + 'used-to-produce.sif'
 
 
+# todo: expand and use exceptions
+class VisualizerError(Exception):
+    """Defines generic errors occuring in ComparativeVisualizer
+    """
+    pass
+
+
+class UserInputDataError(Exception):
+    """Defines errors in input data file type.
+    """
+    pass
+
+
 class ComparativeVisualizer(object):
     """
     Object which visualizes differences in metabolomic abundance data
-    between two experimental groups. The terms 'analytes' and 'metabolites
+    between two experimental groups. The terms 'analytes' and 'metabolites'
     are used interchangeably here.
 
     Attributes:
@@ -64,10 +75,14 @@ class ComparativeVisualizer(object):
     def __init__(self, abundance_filepath, group1, group2,
                  mwu_p, c1, c2, identifier):
 
-        self.abundance_filepath = abundance_filepath
-        self.abundance_df = pd.read_csv(abundance_filepath,
-                                   sep='\t', index_col=0,
-                                   header=0, na_values='nd')
+        # todo: allow csv, excel, etc. (bring in file_conversion.py functions)
+        if not abundance_filepath.endswith('.tsv'):
+            raise UserInputDataError("abundance_filepath must be .tsv format")
+        else:
+            self.abundance_filepath = abundance_filepath
+            self.abundance_df = pd.read_csv(abundance_filepath,
+                                           sep='\t', index_col=0,
+                                           header=0, na_values='nd')
 
         self.group1 = group1
         self.group2 = group2
@@ -88,7 +103,7 @@ class ComparativeVisualizer(object):
         pass
 
 
-    # todo: add optional normalizing function(s)
+    # todo: add optional normalizing functions
 
 
     def _calc_signif(self):
@@ -114,20 +129,20 @@ class ComparativeVisualizer(object):
                              columns=["grp1_mean", "grp2_mean", "fold_change"])
 
         # first calc means for each metabolite in each group
-        fc_df['grp1_mean'] = self.abundance_df.loc[:][list(group1)].mean(axis=1)
-        fc_df['grp2_mean'] = self.abundance_df.loc[:][list(group2)].mean(axis=1)
+        fc_df['grp1_mean'] = self.abundance_df.loc[:][list(self.group1)].mean(axis=1)
+        fc_df['grp2_mean'] = self.abundance_df.loc[:][list(self.group2)].mean(axis=1)
 
         # then calc fold_change between them
         fc_df['fold_change'] = fc_df['grp1_mean'] / fc_df['grp2_mean'] - 1
         self.fc_df = fc_df
 
-
+    # todo: consider using pearson instead
     def _correlate(self):
         """Produces Spearman rank-order correlations among all pairs of metabolites.
         """
 
         # derive all possible pairs of metabolites
-        pairs = itertools.combinations(metabs, 2)
+        pairs = itertools.combinations(self.metabs, 2)
 
         # initialize an empty dataframe of metabs x metabs
         corr_df = pd.DataFrame(index=list(self.metabs),
@@ -141,6 +156,13 @@ class ComparativeVisualizer(object):
             spearmanr = st.spearmanr(metab1, metab2, nan_policy='omit')
             corr_df[pair[0], pair[1]] = (spearmanr.correlation, spearmanr.pvalue)
         self.corr_df = corr_df
+
+
+    def _build_ggm(self):
+        """Produces partial correlations via a Gaussian Graphical Model (GGM).
+        """
+
+        pass
 
 
     def _filter(self):
@@ -175,14 +197,17 @@ class ComparativeVisualizer(object):
     def _format(self):
         """Builds a format file for the output SIF."""
 
-        specify_chebi_formatting(sif_path=outputdir + run_name + "_BOTH.sif",
-                                 mwu_df=self.mwu_df, self.fc_df['fold_change'])
+        formatting.specify_chebi_formatting(sif_path=outputdir + run_name + "_BOTH.sif",
+                                 mwu_df=self.mwu_df, mwu_p = self.mwu_p,
+                                 corr_df=self.corr_df, fc_series=self.fc_df['fold_change'])
 
-        specify_chebi_formatting(sif_path=outputdir + run_name + "_EITHER.sif",
-                                 mwu_df=self.mwu_df, self.fc_df['fold_change'])
+        formatting.specify_chebi_formatting(sif_path=outputdir + run_name + "_EITHER.sif",
+                                 mwu_df=self.mwu_df, mwu_p=self.mwu_p,
+                                 corr_df=self.corr_df, fc_series=self.fc_df['fold_change'])
 
-        specify_chebi_formatting(sif_path=outputdir + run_name + "_DIST2.sif",
-                                 mwu_df=self.mwu_df, self.fc_df['fold_change'])
+        formatting.specify_chebi_formatting(sif_path=outputdir + run_name + "_DIST2.sif",
+                                 mwu_df=self.mwu_df, mwu_p=self.mwu_p,
+                                 corr_df=self.corr_df, fc_series=self.fc_df['fold_change'])
 
 
     def run(self):
@@ -199,97 +224,30 @@ class ComparativeVisualizer(object):
         pass
 
 
-# todo: expand and use exceptions
-class UserAssayDataError(Exception):
-    """Defines exceptions caused by incorrectly-formatted input file"""
+class OneToOneVisualizer(ComparativeVisualizer):
+    """Visualizes metabolomic abundance differences between two individual samples.
+    """
     pass
 
-if __name__ == "__main__":
 
-    # take user input
-    parser = argparse.ArgumentParser()
+class OneToManyVisualizer(ComparativeVisualizer):
+    """Visualizes metabolomic abundance differences between one sample of interest and a
+    given background.
+    """
+    pass
 
-    parser.add_argument("-a", "--assay_file",
-                        type=str,
-                        default= inputdir + 'chebi_dummy_results.tsv',
-                        help="Name of assay results file in input/ dir\n"
-                             "Shape should be [n_analytes, n_samples]\n"
-                             "(default = 'chebi_dummy_results.tsv')")
 
-    parser.add_argument("-g1", "--group1",
-                        type=list,
-                        default=['COLO 320 DM', 'MDA-MB-157', 'NOMO-1',
-                                 'SNU-1', 'RPMI8226', 'COLO-704'],
-                        help="Sample IDs for one experimental group in input file\n"
-                             "(default is associated with chebi_dummy_results.tsv)")
+class TimeCourseVisualizer(ComparativeVisualizer):
+    """Visualizes metabolomic abundance time course data with one SIF and N format files.
+    """
+    pass
 
-    parser.add_argument("-g2", "--group2",
-                        type=list,
-                        default=['MV-4-11', 'SUDHL8', 'P12',
-                                 'A549', 'HPB-ALL', 'ALL-SIL'],
-                        help="Sample IDs for one experimental group in input file\n"
-                             "(default is associated with chebi_dummy_results.tsv)")
 
-    parser.add_argument("-c1", "--minimum_corr_dist1",
-                        type=float,
-                        default=0.2,
-                        help="Min absolute value of spearman correlation\n"
-                             "between two nodes in order for them\n"
-                             "to be kept in 'both' relationships\n"
-                             "default = 0.5")
+class OneToOneFCVisualizer(OneToOneVisualizer):
+    """Visualizes metabolic abundance differences between two groups whose fold change is
+    given in each cell of the input dataframe
+    """
+    pass
 
-    parser.add_argument("-c2", "--minimum_corr_dist2",
-                        type=float,
-                        default=0.5,
-                        help="Min absolute value of spearman correlation\n"
-                             "between two nodes in order for them\n"
-                             "to be kept in 'distance of 2' relationships\n"
-                             "default = 0.5")
 
-    parser.add_argument("-p", "--maximum_mwu_p",
-                        type=float,
-                        default=0.1,
-                        help="The maximum p value allowed for each metabolite\n"
-                             "(mann whitney u test between sensitive and resistant)\n"
-                             "(default = 0.10)")
-
-    parser.add_argument("-i", "--identifier",
-                        type=str,
-                        default="UNNAMED",
-                        help="")
-
-    # todo: implement
-    parser.add_argument("-ll", "--linker_lenience",
-                        type=int,
-                        default=4,
-                        help="Max number of .sif relationships in which an unprofiled\n"
-                             "'linker' node may be present in order to be included\n"
-                             "in the distance-of-2 network\n"
-                             "default = 4")
-
-    # todo: connect to excel & csv conversions in file_conversion.py
-    parser.add_argument("-ft", "--filetype",
-                        type=str,
-                        default=".tsv")
-
-    # parse user input data
-    args = parser.parse_args()
-    assay_file = args.assay_file
-    group1 = args.group1
-    group2 = args.group2
-
-    # parse user visualization specifications
-    min_corr_both = args.minimum_corr_dist1
-    min_corr_dist2 = args.minimum_corr_dist2
-    max_p = args.maximum_mwu_p
-
-    # todo: incorporate linker_lenience into this version
-    ll = args.linker_lenience
-
-    # instantiate, run, and visualize
-    V = ComparativeVisualizer(abundance_filepath = assay_file,
-                              group1 = group1, group2 = group2,
-                              c1 = min_corr_both, c2 = min_corr_dist2, mwu_p=max_p)
-    V.run()
-    V.visualize()
 

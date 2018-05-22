@@ -57,7 +57,7 @@ def excel_to_tsv(excel_filepath, sheet_num=0):
     return tsv_filepath
 
 
-# todo: add csv to tsv?
+# todo: add csv to tsv
 
 # todo: consider moving the following functions to a more appropriate file
 def safelist(listable):
